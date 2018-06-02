@@ -47,7 +47,8 @@ int main(int argc, char const *argv[]) {
 
   // Ожидание открытого сеансокого ключа от пользователя B
   int msgLength;
-  char *recv_message = (char *)calloc(257, sizeof(char));
+  char recv_message[257];
+  memset(recv_message, 0, 257);
   while (1) {
     if ((msgLength = recvfrom(sock_recv, recv_message, 257, 0, NULL, NULL)) < 0)
       perror("Плохой socket клиента.\n");
@@ -57,7 +58,6 @@ int main(int argc, char const *argv[]) {
   mpz_t Y;
   mpz_init(Y);
   mpz_set_str(Y, recv_message, 16);
-  free(recv_message);
   printf("-----------------------------------------------------------------\n");
   printf("Получил чужой открытый сеансовый ключ\n");
 
@@ -78,59 +78,37 @@ int main(int argc, char const *argv[]) {
   gmp_printf("Общий ключ: %Zx\n", sa);
   printf("-----------------------------------------------------------------\n");
 
-  // Ожидание инициализирующего вектора, число символов и зашифрованное
-  // сообщение от пользователя B
-  recv_message = (char *)calloc(16, sizeof(char));
-  char *recv_message_2;
-unsigned char *recv_message_3;
+  // Ожидание дополнительной информации от абонента B
+  struct additional_data *additional_data =
+      (struct additional_data *)calloc(1, sizeof(struct additional_data));
   while (1) {
-    if ((msgLength = recvfrom(sock_recv, recv_message, 16, 0, NULL, NULL)) < 0)
+    if ((msgLength = recvfrom(sock_recv, additional_data,
+                        sizeof(struct additional_data), 0, NULL, NULL)) < 0)
       perror("Плохой socket клиента.\n");
-    else {
-      printf("Получил инициализирующий вектор\n");
-      printf("-----------------------------------------------------------------"
-             "\n");
-      recv_message_2 = (char *)calloc(2, sizeof(char));
-      while (1) {
-        if ((msgLength =
-                 recvfrom(sock_recv, recv_message_2, 2, 0, NULL, NULL)) < 0)
-          perror("Плохой socket клиента.\n");
-        else {
-          printf("Получил длину сообщения\n");
-          printf("-------------------------------------------------------------"
-                 "----\n");
-          recv_message_3 =
-              (unsigned char *)calloc(((int)recv_message_2[0] + 1), sizeof(char));
-          while (1) {
-            if ((msgLength =
-                     recvfrom(sock_recv, recv_message_3,
-                              ((int)recv_message_2[0] + 1), 0, NULL, NULL)) < 0)
-              perror("Плохой socket клиента.\n");
-            else {
-              printf("Получил зашифрованное сообщение\n");
-              printf("---------------------------------------------------------"
-                     "--------\n");
-              break;
-            }
-          }
-          break;
-        }
-      }
+    else
       break;
-    }
   }
-  printf("Полученый инициализирующий вектор: ");
-  for (size_t i = 0; i < 16; i++)
-    printf("%c", recv_message[i]);
-  printf("\n");
+  printf("Принял дополнительные данные\n");
   printf("-----------------------------------------------------------------\n");
-  int num_symbols = (int)recv_message_2[0];
-  free(recv_message_2);
-  printf("Число зашифрованных символов: %i\n", num_symbols);
+  printf("Инициализирующий вектор: %s", additional_data->iv);
   printf("-----------------------------------------------------------------\n");
-  printf("Полученное зашифрованное сообщение: ");
-  for (size_t i = 0; i < (num_symbols + 1); i++)
-    printf("%x", recv_message_3[i]);
+  printf("Длина зашифрованного сообщения: %i\n",
+         additional_data->length_message);
+  printf("-----------------------------------------------------------------\n");
+
+  // Ожидание зашифрованного сообщения от абонента B
+  u8 *ciphertext = (u8 *)calloc(additional_data->length_message, sizeof(u8));
+  while (1) {
+    if ((msgLength = recvfrom(sock_recv, ciphertext,
+                        additional_data->length_message, 0, NULL, NULL)) < 0)
+      perror("Плохой socket клиента.\n");
+    else
+      break;
+  }
+  printf("Принял зашифрованное сообщение: ");
+  for (size_t i = 0; i < additional_data->length_message; i++) {
+    printf("%x", ciphertext[i]);
+  }
   printf("\n");
   printf("-----------------------------------------------------------------\n");
 
@@ -153,24 +131,16 @@ unsigned char *recv_message_3;
   printf("-----------------------------------------------------------------\n");
 
   // Установка инициализируещего вектора
-  u8 iv[16];
-  memset(iv, 0, 16);
-  for (size_t i = 0; i < 16; i++)
-    iv[i] = recv_message[i];
-  free(recv_message);
-  ECRYPT_ivsetup(&ctx, iv);
+  ECRYPT_ivsetup(&ctx, additional_data->iv);
   printf("Инициализирующий вектор установлен в структуру\n");
   printf("-----------------------------------------------------------------\n");
 
   // Расшифровка
-  u8 *ciphertext = (u8 *)calloc((num_symbols + 1), sizeof(u8));
-  for (size_t i = 0; i < (num_symbols + 1); i++)
-    ciphertext[i] = recv_message_3[i];
-  free(recv_message_3);
-  u8 *plaintext = (u8 *)calloc((num_symbols + 1), sizeof(u8));
-  ECRYPT_encrypt_bytes(&ctx, ciphertext, plaintext, num_symbols + 1);
+  u8 *plaintext = (u8 *)calloc(additional_data->length_message, sizeof(u8));
+  ECRYPT_encrypt_bytes(&ctx, ciphertext, plaintext,
+                       additional_data->length_message);
   printf("Расшифрованный текст: ");
-  for (int i = 0; i < num_symbols; i++)
+  for (int i = 0; i < additional_data->length_message; i++)
     printf("%c", plaintext[i]);
   printf("\n");
   printf("-----------------------------------------------------------------\n");

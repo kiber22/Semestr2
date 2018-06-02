@@ -97,12 +97,13 @@ int main(int argc, char const *argv[]) {
   printf("-----------------------------------------------------------------\n");
 
   // Установка инициализируещего вектора
-  u8 iv[16];
-  memset(iv, 0, 16);
-  printf("Введите инициализирующий вектор: ");
-  scanf("%16s", iv);
+  struct additional_data *additional_data =
+      (struct additional_data *)calloc(1, sizeof(struct additional_data));
+  for (size_t i = 0; i < 16; i++)
+    additional_data->iv[i] = rand() % 50 + 50;
+  printf("Инициализирующий вектор: %s\n", additional_data->iv);
   printf("-----------------------------------------------------------------\n");
-  ECRYPT_ivsetup(&ctx, iv);
+  ECRYPT_ivsetup(&ctx, additional_data->iv);
   printf("Инициализирующий вектор установлен в структуру\n");
   printf("-----------------------------------------------------------------\n");
 
@@ -110,46 +111,29 @@ int main(int argc, char const *argv[]) {
   u8 plaintext[25];
   memset(plaintext, 0, 25);
   printf("Введите шифруемый текст (не более 24 символов): ");
-  scanf("%24s", plaintext);
-  int num_symbols = strlen((char *)plaintext);
+  scanf("%24s%n", plaintext, &additional_data->length_message);
   printf("-----------------------------------------------------------------\n");
-  u8 *ciphertext = (u8 *)calloc((num_symbols + 1), sizeof(u8));
-  ECRYPT_encrypt_bytes(&ctx, plaintext, ciphertext, (num_symbols + 1));
-  printf("Шифрование %i символов завершено\n", num_symbols);
+  u8 *ciphertext = (u8 *)calloc(additional_data->length_message, sizeof(u8));
+  ECRYPT_encrypt_bytes(&ctx, plaintext, ciphertext,
+                       additional_data->length_message);
+  printf("Шифрование %i символов завершено\n", additional_data->length_message);
   printf("-----------------------------------------------------------------\n");
   printf("Зашифрованный текст: ");
-  for (int i = 0; i < (num_symbols+1); i++)
+  for (int i = 0; i < additional_data->length_message; i++)
     printf("%x", ciphertext[i]);
   printf("\n");
   printf("-----------------------------------------------------------------\n");
 
-  // Отправка инициализируещего вектора абоненту A
-  send_message = (char *)calloc(16, sizeof(char));
-  for (size_t i = 0; i < 16; i++)
-    send_message[i] = iv[i];
-  if (sendto(sock_send, send_message, 16, 0, (struct sockaddr *)&user_addr_a,
-             sizeof(user_addr_a)) < 0)
+  // Отправка дополнительных данных абоненту A
+  if (sendto(sock_send, additional_data, sizeof(struct additional_data), 0,
+             (struct sockaddr *)&user_addr_a, sizeof(user_addr_a)) < 0)
     perror("Проблема с sendto.\n");
   free(send_message);
-  printf("Отправил инициализирующий вектор\n");
-  printf("-----------------------------------------------------------------\n");
-
-  // Отправка количества символов в сообщении абоненту A
-  send_message = (char *)calloc(2, sizeof(char));
-  send_message[0] = (char)num_symbols;
-  send_message[1] = '\0';
-  if (sendto(sock_send, send_message, 2, 0, (struct sockaddr *)&user_addr_a,
-             sizeof(user_addr_a)) < 0)
-    perror("Проблема с sendto.\n");
-  free(send_message);
-  printf("Отправил количество символов в сообщении\n");
+  printf("Отправил дополнительные данные\n");
   printf("-----------------------------------------------------------------\n");
 
   // Отправка зашифрованного сообщения абоненту A
-  send_message = (char *)calloc((num_symbols + 1), sizeof(char));
-  for (size_t i = 0; i < (num_symbols + 1); i++)
-    send_message[i] = ciphertext[i];
-  if (sendto(sock_send, send_message, (num_symbols + 1), 0,
+  if (sendto(sock_send, ciphertext, additional_data->length_message, 0,
              (struct sockaddr *)&user_addr_a, sizeof(user_addr_a)) < 0)
     perror("Проблема с sendto.\n");
   printf("Отправил зашифрованное сообщение\n");
