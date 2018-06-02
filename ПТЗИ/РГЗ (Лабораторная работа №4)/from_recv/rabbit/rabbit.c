@@ -1,151 +1,320 @@
+
+/******************************************************************************/
+/* File name: rabbit.c                                                        */
+/*----------------------------------------------------------------------------*/
+/* Rabbit C source code in ECRYPT format                                      */
+/*----------------------------------------------------------------------------*/
+/* Copyright (C) Cryptico A/S. All rights reserved.                           */
+/*                                                                            */
+/* YOU SHOULD CAREFULLY READ THIS LEGAL NOTICE BEFORE USING THIS SOFTWARE.    */
+/*                                                                            */
+/* This software is developed by Cryptico A/S and/or its suppliers.           */
+/* All title and intellectual property rights in and to the software,         */
+/* including but not limited to patent rights and copyrights, are owned by    */
+/* Cryptico A/S and/or its suppliers.                                         */
+/*                                                                            */
+/* The software may be used solely for non-commercial purposes                */
+/* without the prior written consent of Cryptico A/S. For further             */
+/* information on licensing terms and conditions please contact Cryptico A/S  */
+/* at info@cryptico.com                                                       */
+/*                                                                            */
+/* Cryptico, CryptiCore, the Cryptico logo and "Re-thinking encryption" are   */
+/* either trademarks or registered trademarks of Cryptico A/S.                */
+/*                                                                            */
+/* Cryptico A/S shall not in any way be liable for any use of this software.  */
+/* The software is provided "as is" without any express or implied warranty.  */
+/*                                                                            */
+/******************************************************************************/
+
 #include "../.h/libraries.h"
 
-#define ROTATE(v,c) (ROTL32(v,c))
-#define XOR(v,w) ((v) ^ (w))
-#define PLUS(v,w) (U32V((v) + (w)))
-#define PLUSONE(v) (PLUS((v),1))
+/* -------------------------------------------------------------------------- */
 
-static void salsa20_wordtobyte(u8 output[64],const u32 input[16])
+/* Square a 32-bit unsigned integer to obtain the 64-bit result and return */
+/* the upper 32 bits XOR the lower 32 bits */
+static u32 RABBIT_g_func(u32 x)
 {
-  u32 x[16];
-  int i;
+   /* Temporary variables */
+   u32 a, b, h, l;
 
-  for (i = 0;i < 16;++i) x[i] = input[i];
-  for (i = 20;i > 0;i -= 2) {
-    x[ 4] = XOR(x[ 4],ROTATE(PLUS(x[ 0],x[12]), 7));
-    x[ 8] = XOR(x[ 8],ROTATE(PLUS(x[ 4],x[ 0]), 9));
-    x[12] = XOR(x[12],ROTATE(PLUS(x[ 8],x[ 4]),13));
-    x[ 0] = XOR(x[ 0],ROTATE(PLUS(x[12],x[ 8]),18));
-    x[ 9] = XOR(x[ 9],ROTATE(PLUS(x[ 5],x[ 1]), 7));
-    x[13] = XOR(x[13],ROTATE(PLUS(x[ 9],x[ 5]), 9));
-    x[ 1] = XOR(x[ 1],ROTATE(PLUS(x[13],x[ 9]),13));
-    x[ 5] = XOR(x[ 5],ROTATE(PLUS(x[ 1],x[13]),18));
-    x[14] = XOR(x[14],ROTATE(PLUS(x[10],x[ 6]), 7));
-    x[ 2] = XOR(x[ 2],ROTATE(PLUS(x[14],x[10]), 9));
-    x[ 6] = XOR(x[ 6],ROTATE(PLUS(x[ 2],x[14]),13));
-    x[10] = XOR(x[10],ROTATE(PLUS(x[ 6],x[ 2]),18));
-    x[ 3] = XOR(x[ 3],ROTATE(PLUS(x[15],x[11]), 7));
-    x[ 7] = XOR(x[ 7],ROTATE(PLUS(x[ 3],x[15]), 9));
-    x[11] = XOR(x[11],ROTATE(PLUS(x[ 7],x[ 3]),13));
-    x[15] = XOR(x[15],ROTATE(PLUS(x[11],x[ 7]),18));
-    x[ 1] = XOR(x[ 1],ROTATE(PLUS(x[ 0],x[ 3]), 7));
-    x[ 2] = XOR(x[ 2],ROTATE(PLUS(x[ 1],x[ 0]), 9));
-    x[ 3] = XOR(x[ 3],ROTATE(PLUS(x[ 2],x[ 1]),13));
-    x[ 0] = XOR(x[ 0],ROTATE(PLUS(x[ 3],x[ 2]),18));
-    x[ 6] = XOR(x[ 6],ROTATE(PLUS(x[ 5],x[ 4]), 7));
-    x[ 7] = XOR(x[ 7],ROTATE(PLUS(x[ 6],x[ 5]), 9));
-    x[ 4] = XOR(x[ 4],ROTATE(PLUS(x[ 7],x[ 6]),13));
-    x[ 5] = XOR(x[ 5],ROTATE(PLUS(x[ 4],x[ 7]),18));
-    x[11] = XOR(x[11],ROTATE(PLUS(x[10],x[ 9]), 7));
-    x[ 8] = XOR(x[ 8],ROTATE(PLUS(x[11],x[10]), 9));
-    x[ 9] = XOR(x[ 9],ROTATE(PLUS(x[ 8],x[11]),13));
-    x[10] = XOR(x[10],ROTATE(PLUS(x[ 9],x[ 8]),18));
-    x[12] = XOR(x[12],ROTATE(PLUS(x[15],x[14]), 7));
-    x[13] = XOR(x[13],ROTATE(PLUS(x[12],x[15]), 9));
-    x[14] = XOR(x[14],ROTATE(PLUS(x[13],x[12]),13));
-    x[15] = XOR(x[15],ROTATE(PLUS(x[14],x[13]),18));
-  }
-  for (i = 0;i < 16;++i) x[i] = PLUS(x[i],input[i]);
-  for (i = 0;i < 16;++i) U32TO8_LITTLE(output + 4 * i,x[i]);
+   /* Construct high and low argument for squaring */
+   a = x&0xFFFF;
+   b = x>>16;
+
+   /* Calculate high and low result of squaring */
+   h = (((U32V(a*a)>>17) + U32V(a*b))>>15) + b*b;
+   l = x*x;
+
+   /* Return high XOR low */
+   return U32V(h^l);
 }
 
+/* -------------------------------------------------------------------------- */
+
+/* Calculate the next internal state */
+static void RABBIT_next_state(RABBIT_ctx *p_instance)
+{
+   /* Temporary variables */
+   u32 g[8], c_old[8], i;
+
+   /* Save old counter values */
+   for (i=0; i<8; i++)
+      c_old[i] = p_instance->c[i];
+
+   /* Calculate new counter values */
+   p_instance->c[0] = U32V(p_instance->c[0] + 0x4D34D34D + p_instance->carry);
+   p_instance->c[1] = U32V(p_instance->c[1] + 0xD34D34D3 + (p_instance->c[0] < c_old[0]));
+   p_instance->c[2] = U32V(p_instance->c[2] + 0x34D34D34 + (p_instance->c[1] < c_old[1]));
+   p_instance->c[3] = U32V(p_instance->c[3] + 0x4D34D34D + (p_instance->c[2] < c_old[2]));
+   p_instance->c[4] = U32V(p_instance->c[4] + 0xD34D34D3 + (p_instance->c[3] < c_old[3]));
+   p_instance->c[5] = U32V(p_instance->c[5] + 0x34D34D34 + (p_instance->c[4] < c_old[4]));
+   p_instance->c[6] = U32V(p_instance->c[6] + 0x4D34D34D + (p_instance->c[5] < c_old[5]));
+   p_instance->c[7] = U32V(p_instance->c[7] + 0xD34D34D3 + (p_instance->c[6] < c_old[6]));
+   p_instance->carry = (p_instance->c[7] < c_old[7]);
+
+   /* Calculate the g-values */
+   for (i=0;i<8;i++)
+      g[i] = RABBIT_g_func(U32V(p_instance->x[i] + p_instance->c[i]));
+
+   /* Calculate new state values */
+   p_instance->x[0] = U32V(g[0] + ROTL32(g[7],16) + ROTL32(g[6], 16));
+   p_instance->x[1] = U32V(g[1] + ROTL32(g[0], 8) + g[7]);
+   p_instance->x[2] = U32V(g[2] + ROTL32(g[1],16) + ROTL32(g[0], 16));
+   p_instance->x[3] = U32V(g[3] + ROTL32(g[2], 8) + g[1]);
+   p_instance->x[4] = U32V(g[4] + ROTL32(g[3],16) + ROTL32(g[2], 16));
+   p_instance->x[5] = U32V(g[5] + ROTL32(g[4], 8) + g[3]);
+   p_instance->x[6] = U32V(g[6] + ROTL32(g[5],16) + ROTL32(g[4], 16));
+   p_instance->x[7] = U32V(g[7] + ROTL32(g[6], 8) + g[5]);
+}
+
+/* ------------------------------------------------------------------------- */
+
+/* No initialization is needed for Rabbit */
 void ECRYPT_init(void)
 {
-  return;
+   return;
 }
 
-static const char sigma[17] = "expand 32-byte k";
-static const char tau[17] = "expand 16-byte k";
+/* ------------------------------------------------------------------------- */
 
-void ECRYPT_keysetup(ECRYPT_ctx *x,const u8 *k,u32 kbits,u32 ivbits)
+/* Key setup */
+void ECRYPT_keysetup(ECRYPT_ctx* ctx, const u8* key, u32 keysize, u32 ivsize)
 {
-  int i;
-  static const char *constants;
+   /* Temporary variables */
+   u32 k0, k1, k2, k3, i;
 
-  x->input[1] = U8TO32_LITTLE(k + 0);
-  x->input[2] = U8TO32_LITTLE(k + 4);
-  x->input[3] = U8TO32_LITTLE(k + 8);
-  x->input[4] = U8TO32_LITTLE(k + 12);
-  if (kbits == 256) { /* recommended */
-    k += 16;
-    constants = sigma;
-  } else { /* kbits == 128 */
-    constants = tau;
-  }
-  x->input[11] = U8TO32_LITTLE(k + 0);
-  x->input[12] = U8TO32_LITTLE(k + 4);
-  x->input[13] = U8TO32_LITTLE(k + 8);
-  x->input[14] = U8TO32_LITTLE(k + 12);
-  x->input[0] = U8TO32_LITTLE(constants + 0);
-  x->input[5] = U8TO32_LITTLE(constants + 4);
-  x->input[10] = U8TO32_LITTLE(constants + 8);
-  x->input[15] = U8TO32_LITTLE(constants + 12);
+   /* Generate four subkeys */
+   k0 = U8TO32_LITTLE(key+ 0);
+   k1 = U8TO32_LITTLE(key+ 4);
+   k2 = U8TO32_LITTLE(key+ 8);
+   k3 = U8TO32_LITTLE(key+12);
+
+   /* Generate initial state variables */
+   ctx->master_ctx.x[0] = k0;
+   ctx->master_ctx.x[2] = k1;
+   ctx->master_ctx.x[4] = k2;
+   ctx->master_ctx.x[6] = k3;
+   ctx->master_ctx.x[1] = U32V(k3<<16) | (k2>>16);
+   ctx->master_ctx.x[3] = U32V(k0<<16) | (k3>>16);
+   ctx->master_ctx.x[5] = U32V(k1<<16) | (k0>>16);
+   ctx->master_ctx.x[7] = U32V(k2<<16) | (k1>>16);
+
+   /* Generate initial counter values */
+   ctx->master_ctx.c[0] = ROTL32(k2, 16);
+   ctx->master_ctx.c[2] = ROTL32(k3, 16);
+   ctx->master_ctx.c[4] = ROTL32(k0, 16);
+   ctx->master_ctx.c[6] = ROTL32(k1, 16);
+   ctx->master_ctx.c[1] = (k0&0xFFFF0000) | (k1&0xFFFF);
+   ctx->master_ctx.c[3] = (k1&0xFFFF0000) | (k2&0xFFFF);
+   ctx->master_ctx.c[5] = (k2&0xFFFF0000) | (k3&0xFFFF);
+   ctx->master_ctx.c[7] = (k3&0xFFFF0000) | (k0&0xFFFF);
+
+   /* Clear carry bit */
+   ctx->master_ctx.carry = 0;
+
+   /* Iterate the system four times */
+   for (i=0; i<4; i++)
+      RABBIT_next_state(&(ctx->master_ctx));
+
+   /* Modify the counters */
+   for (i=0; i<8; i++)
+      ctx->master_ctx.c[i] ^= ctx->master_ctx.x[(i+4)&0x7];
+
+   /* Copy master instance to work instance */
+   for (i=0; i<8; i++)
+   {
+      ctx->work_ctx.x[i] = ctx->master_ctx.x[i];
+      ctx->work_ctx.c[i] = ctx->master_ctx.c[i];
+   }
+   ctx->work_ctx.carry = ctx->master_ctx.carry;
 }
 
-void ECRYPT_ivsetup(ECRYPT_ctx *x,const u8 *iv)
+/* ------------------------------------------------------------------------- */
+
+/* IV setup */
+void ECRYPT_ivsetup(ECRYPT_ctx* ctx, const u8* iv)
 {
-  x->input[6] = U8TO32_LITTLE(iv + 0);
-  x->input[7] = U8TO32_LITTLE(iv + 4);
-  x->input[8] = 0;
-  x->input[9] = 0;
+   /* Temporary variables */
+   u32 i0, i1, i2, i3, i;
+
+   /* Generate four subvectors */
+   i0 = U8TO32_LITTLE(iv+0);
+   i2 = U8TO32_LITTLE(iv+4);
+   i1 = (i0>>16) | (i2&0xFFFF0000);
+   i3 = (i2<<16) | (i0&0x0000FFFF);
+
+   /* Modify counter values */
+   ctx->work_ctx.c[0] = ctx->master_ctx.c[0] ^ i0;
+   ctx->work_ctx.c[1] = ctx->master_ctx.c[1] ^ i1;
+   ctx->work_ctx.c[2] = ctx->master_ctx.c[2] ^ i2;
+   ctx->work_ctx.c[3] = ctx->master_ctx.c[3] ^ i3;
+   ctx->work_ctx.c[4] = ctx->master_ctx.c[4] ^ i0;
+   ctx->work_ctx.c[5] = ctx->master_ctx.c[5] ^ i1;
+   ctx->work_ctx.c[6] = ctx->master_ctx.c[6] ^ i2;
+   ctx->work_ctx.c[7] = ctx->master_ctx.c[7] ^ i3;
+
+   /* Copy state variables */
+   for (i=0; i<8; i++)
+      ctx->work_ctx.x[i] = ctx->master_ctx.x[i];
+   ctx->work_ctx.carry = ctx->master_ctx.carry;
+
+   /* Iterate the system four times */
+   for (i=0; i<4; i++)
+      RABBIT_next_state(&(ctx->work_ctx));
 }
 
-void ECRYPT_encrypt_bytes(ECRYPT_ctx *x,const u8 *m,u8 *c,u32 bytes)
+/* ------------------------------------------------------------------------- */
+
+/* Encrypt/decrypt a message of any size */
+void ECRYPT_process_bytes(int action, ECRYPT_ctx* ctx, const u8* input,
+          u8* output, u32 msglen)
 {
-  u8 output[64];
-  int i;
+   /* Temporary variables */
+   u32 i;
+   u8 buffer[16];
 
-  if (!bytes) return;
-  for (;;) {
-    salsa20_wordtobyte(output,x->input);
-    x->input[8] = PLUSONE(x->input[8]);
-    if (!x->input[8]) {
-      x->input[9] = PLUSONE(x->input[9]);
-      /* stopping at 2^70 bytes per nonce is user's responsibility */
-    }
-    if (bytes <= 64) {
-      for (i = 0;i < bytes;++i) c[i] = m[i] ^ output[i];
-      return;
-    }
-    for (i = 0;i < 64;++i) c[i] = m[i] ^ output[i];
-    bytes -= 64;
-    c += 64;
-    m += 64;
-  }
+   /* Encrypt/decrypt all full blocks */
+   while (msglen >= 16)
+   {
+      /* Iterate the system */
+      RABBIT_next_state(&(ctx->work_ctx));
+
+      /* Encrypt/decrypt 16 bytes of data */
+      *(u32*)(output+ 0) = *(u32*)(input+ 0) ^ U32TO32_LITTLE(ctx->work_ctx.x[0] ^
+                (ctx->work_ctx.x[5]>>16) ^ U32V(ctx->work_ctx.x[3]<<16));
+      *(u32*)(output+ 4) = *(u32*)(input+ 4) ^ U32TO32_LITTLE(ctx->work_ctx.x[2] ^
+                (ctx->work_ctx.x[7]>>16) ^ U32V(ctx->work_ctx.x[5]<<16));
+      *(u32*)(output+ 8) = *(u32*)(input+ 8) ^ U32TO32_LITTLE(ctx->work_ctx.x[4] ^
+                (ctx->work_ctx.x[1]>>16) ^ U32V(ctx->work_ctx.x[7]<<16));
+      *(u32*)(output+12) = *(u32*)(input+12) ^ U32TO32_LITTLE(ctx->work_ctx.x[6] ^
+                (ctx->work_ctx.x[3]>>16) ^ U32V(ctx->work_ctx.x[1]<<16));
+
+      /* Increment pointers and decrement length */
+      input += 16;
+      output += 16;
+      msglen -= 16;
+   }
+
+   /* Encrypt/decrypt remaining data */
+   if (msglen)
+   {
+      /* Iterate the system */
+      RABBIT_next_state(&(ctx->work_ctx));
+
+      /* Generate 16 bytes of pseudo-random data */
+      *(u32*)(buffer+ 0) = U32TO32_LITTLE(ctx->work_ctx.x[0] ^
+                (ctx->work_ctx.x[5]>>16) ^ U32V(ctx->work_ctx.x[3]<<16));
+      *(u32*)(buffer+ 4) = U32TO32_LITTLE(ctx->work_ctx.x[2] ^
+                (ctx->work_ctx.x[7]>>16) ^ U32V(ctx->work_ctx.x[5]<<16));
+      *(u32*)(buffer+ 8) = U32TO32_LITTLE(ctx->work_ctx.x[4] ^
+                (ctx->work_ctx.x[1]>>16) ^ U32V(ctx->work_ctx.x[7]<<16));
+      *(u32*)(buffer+12) = U32TO32_LITTLE(ctx->work_ctx.x[6] ^
+                (ctx->work_ctx.x[3]>>16) ^ U32V(ctx->work_ctx.x[1]<<16));
+
+      /* Encrypt/decrypt the data */
+      for (i=0; i<msglen; i++)
+         output[i] = input[i] ^ buffer[i];
+   }
 }
 
-void ECRYPT_decrypt_bytes(ECRYPT_ctx *x,const u8 *c,u8 *m,u32 bytes)
+/* ------------------------------------------------------------------------- */
+
+/* Generate keystream */
+void ECRYPT_keystream_bytes(ECRYPT_ctx* ctx, u8* keystream, u32 length)
 {
-  ECRYPT_encrypt_bytes(x,c,m,bytes);
+   /* Temporary variables */
+   u32 i;
+   u8 buffer[16];
+
+   /* Generate all full blocks */
+   while (length >= 16)
+   {
+      /* Iterate the system */
+      RABBIT_next_state(&(ctx->work_ctx));
+
+      /* Generate 16 bytes of pseudo-random data */
+      *(u32*)(keystream+ 0) = U32TO32_LITTLE(ctx->work_ctx.x[0] ^
+                (ctx->work_ctx.x[5]>>16) ^ U32V(ctx->work_ctx.x[3]<<16));
+      *(u32*)(keystream+ 4) = U32TO32_LITTLE(ctx->work_ctx.x[2] ^
+                (ctx->work_ctx.x[7]>>16) ^ U32V(ctx->work_ctx.x[5]<<16));
+      *(u32*)(keystream+ 8) = U32TO32_LITTLE(ctx->work_ctx.x[4] ^
+                (ctx->work_ctx.x[1]>>16) ^ U32V(ctx->work_ctx.x[7]<<16));
+      *(u32*)(keystream+12) = U32TO32_LITTLE(ctx->work_ctx.x[6] ^
+                (ctx->work_ctx.x[3]>>16) ^ U32V(ctx->work_ctx.x[1]<<16));
+
+      /* Increment pointers and decrement length */
+      keystream += 16;
+      length -= 16;
+   }
+
+   /* Generate remaining pseudo-random data */
+   if (length)
+   {
+      /* Iterate the system */
+      RABBIT_next_state(&(ctx->work_ctx));
+
+      /* Generate 16 bytes of pseudo-random data */
+      *(u32*)(buffer+ 0) = U32TO32_LITTLE(ctx->work_ctx.x[0] ^
+                (ctx->work_ctx.x[5]>>16) ^ U32V(ctx->work_ctx.x[3]<<16));
+      *(u32*)(buffer+ 4) = U32TO32_LITTLE(ctx->work_ctx.x[2] ^
+                (ctx->work_ctx.x[7]>>16) ^ U32V(ctx->work_ctx.x[5]<<16));
+      *(u32*)(buffer+ 8) = U32TO32_LITTLE(ctx->work_ctx.x[4] ^
+                (ctx->work_ctx.x[1]>>16) ^ U32V(ctx->work_ctx.x[7]<<16));
+      *(u32*)(buffer+12) = U32TO32_LITTLE(ctx->work_ctx.x[6] ^
+                (ctx->work_ctx.x[3]>>16) ^ U32V(ctx->work_ctx.x[1]<<16));
+
+      /* Copy remaining data */
+      for (i=0; i<length; i++)
+         keystream[i] = buffer[i];
+   }
 }
 
-void ECRYPT_keystream_bytes(ECRYPT_ctx *x,u8 *stream,u32 bytes)
+/* ------------------------------------------------------------------------- */
+
+/* Encrypt/decrypt a number of full blocks */
+void ECRYPT_process_blocks(int action, ECRYPT_ctx* ctx, const u8* input,
+          u8* output, u32 blocks)
 {
-  u32 i;
-  for (i = 0;i < bytes;++i) stream[i] = 0;
-  ECRYPT_encrypt_bytes(x,stream,stream,bytes);
+   /* Temporary variables */
+   u32 i;
+
+   for (i=0; i<blocks; i++)
+   {
+      /* Iterate the system */
+      RABBIT_next_state(&(ctx->work_ctx));
+
+      /* Encrypt/decrypt 16 bytes of data */
+      *(u32*)(output+ 0) = *(u32*)(input+ 0) ^ U32TO32_LITTLE(ctx->work_ctx.x[0] ^
+                (ctx->work_ctx.x[5]>>16) ^ U32V(ctx->work_ctx.x[3]<<16));
+      *(u32*)(output+ 4) = *(u32*)(input+ 4) ^ U32TO32_LITTLE(ctx->work_ctx.x[2] ^
+                (ctx->work_ctx.x[7]>>16) ^ U32V(ctx->work_ctx.x[5]<<16));
+      *(u32*)(output+ 8) = *(u32*)(input+ 8) ^ U32TO32_LITTLE(ctx->work_ctx.x[4] ^
+                (ctx->work_ctx.x[1]>>16) ^ U32V(ctx->work_ctx.x[7]<<16));
+      *(u32*)(output+12) = *(u32*)(input+12) ^ U32TO32_LITTLE(ctx->work_ctx.x[6] ^
+                (ctx->work_ctx.x[3]>>16) ^ U32V(ctx->work_ctx.x[1]<<16));
+
+      /* Increment pointers to input and output data */
+      input += 16;
+      output += 16;
+   }
 }
-
-
-#include <memory.h>
-#include <stdio.h>
-
-ECRYPT_ctx ctx;
-
-int main (int argc, char* argv[])
-  {
-  u8 K [16], IV [16], in [100], out [100];
-  memset (K, 0, 16);
-  memset (IV, 0, 16);
-  memset (in, 0, 100);
-  if (argc > 1) for (int i = 0; argv[1][i]; i++) K[i] = argv[1][i];
-  if (argc > 2) for (int i = 0; argv[2][i]; i++) IV[i] = argv[2][i];
-  printf ("K = %s  IV = %s\n", K, IV);
-  ECRYPT_init ();
-  ECRYPT_keysetup (&ctx, K, 128, 128);
-  ECRYPT_ivsetup (&ctx, IV);
-  ECRYPT_encrypt_bytes (&ctx, in, out, 100);
-  for (int i = 0; i < 100; i++) printf ("%0x", out[i]);
-  printf ("\n");
-  return 0;
-  }
